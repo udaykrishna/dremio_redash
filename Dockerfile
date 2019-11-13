@@ -1,7 +1,7 @@
 FROM redash/redash:8.0.0.b32245
 
-USER 0 # redash changes user to redash, we change it back to root to have all access
-RUN useradd --create-home redash
+USER root
+# RUN useradd --create-home redash
 
 ENV REDASH_BASE_PATH=/app
 ENV DRIVER_VERSION=1.4.2.1003
