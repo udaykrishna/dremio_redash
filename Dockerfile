@@ -1,5 +1,7 @@
 FROM redash/redash:8.0.0.b32245
 
+USER root # redash changes user to redash, we change it back to root to have all access
+
 ENV REDASH_BASE_PATH=/app
 ENV REDASH_ADDITIONAL_QUERY_RUNNERS=redash.query_runner.python,redash.query_runner.dremio_odbc
 
