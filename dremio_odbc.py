@@ -56,6 +56,11 @@ class DremioODBC(BaseQueryRunner):
     def enabled(cls):
         return enabled
 
+    
+    @classmethod
+    def type(cls):
+        return "dremio_odbc"
+    
     @classmethod
     def determine_type(cls, data_type, scale):
         t = TYPES_MAP.get(data_type, None)
