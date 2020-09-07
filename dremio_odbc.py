@@ -4,10 +4,12 @@ try:
 except ImportError:
     enabled = False
 
-import os
+import os, json
 from redash.query_runner import BaseQueryRunner, register
 from redash.query_runner import TYPE_STRING, TYPE_DATE, TYPE_DATETIME, TYPE_INTEGER, TYPE_FLOAT, TYPE_BOOLEAN
 from redash.utils import json_dumps, json_loads
+# from redash.tasks.queries.execution import QueryExecutionError
+import requests
 
 TYPES_MAP = {
     0: TYPE_INTEGER,
@@ -20,9 +22,94 @@ TYPES_MAP = {
     13: TYPE_BOOLEAN
 }
 
+class DremioConnectionManager:
+    endpoint_map = {
+            "login":"apiv2/login",
+            "new_query": "apiv2/datasets/new_untitled_sql_and_run?newVersion=1"
+        }
+    error_template = "Error {message} at Line {line} and column {col}"
+    def __init__(self, host, username, password, odbc_port=31010, api_port=9047, https=False):
+        self.host = host
+        self.username = username
+        self.password = password
+        self.api_port = api_port
+        self.odbc_port = odbc_port
+        self.session = self._create_session()
+        self.https=https
+        self._login()
+    
+    @property
+    def apiurl(self):
+        protocol = 'https' if self.https else 'http'
+        return "{protocol}://{host}:{port}".format(protocol=protocol, host=self.host, port=self.api_port)
+
+    def _create_session(self):
+        headers = {'content-type':'application/json'}
+        session = requests.Session()
+        session.headers.update(headers)
+        return session
+    
+    def _login(self):
+        endpoint = self.get_url("login")
+        resp = self.session.post(endpoint, data=json.dumps({"userName":self.username,"password":self.password}))
+        data = json.loads(resp.content.decode())
+        self.session.headers.update({"authorization":"_dremio{token}".format(token=data["token"])})
+        return self.session
+    
+    def get_url(self, endpoint_name):
+        return "{apiurl}/{endpoint}".format(apiurl=self.apiurl, endpoint=self.endpoint_map[endpoint_name])
+
+    def get_connection_string(self):
+        driver = "{" + os.getenv("DREMIO_DRIVER", "Dremio ODBC Driver 64-bit") + "}"
+        return "Driver={};ConnectionType=Direct;HOST={};PORT={};AuthenticationType=Plain;UID={};PWD={}".format(
+            driver,
+            self.host,
+            self.odbc_port,
+            self.username,
+            self.password
+        )
+    def get_error_message(self, query):
+        url = self.get_url("new_query")
+        payload = json.dumps({"sql":query})
+        resp = self.session.post(url, data=payload)
+        if resp.status_code==400:
+            data = json.loads(resp.content.decode())
+            code = data.get("code")
+            message = data.get("errorMessage")
+            code = data.get("code")
+            details = []
+            for error in data.get("details", {}).get("errors", []):
+                e_message = error.get("message"," \n ").split("\n")[0]
+                if isinstance(e_message, str):
+                    e_message = e_message.split('\n')[0]
+                e_range = error.get("range", {})
+                line = e_range.get("startLine")
+                column = e_range.get("startColumn")
+                details.append(self.error_template.format(message=e_message, line=line, col=column))
+            details = "\n".join(details)
+            base_error = "{code}: {message} \n\nDETAILS\n\n{details}".format(code=code, message=message, details=details)
+            return base_error
+        elif resp.status_code==200:
+            return "Dremio had a slight hiccup, please re-run your query"
+        elif resp.status_code==401:
+            self._login()
+            return self.get_error_message(query)
+        else:
+            data = resp.content.decode()
+            return data
+
+
 
 class DremioODBC(BaseQueryRunner):
     noop_query = "SELECT 1"
+
+    def __init__(self, configuration):
+        super(DremioODBC, self).__init__(configuration)
+                
+        self.connection_manager = DremioConnectionManager(self.configuration['host'],
+                self.configuration['user'],
+                self.configuration['password'],
+                self.configuration['port'])
 
     @classmethod
     def configuration_schema(cls):
@@ -69,16 +156,9 @@ class DremioODBC(BaseQueryRunner):
         return t
 
     def run_query(self, query, user):
-
-        driver = "{" + os.getenv("DREMIO_DRIVER", "Dremio ODBC Driver 64-bit") + "}"
+       
         connection = pyodbc.connect(
-            "Driver={};ConnectionType=Direct;HOST={};PORT={};AuthenticationType=Plain;UID={};PWD={}".format(
-                driver,
-                self.configuration['host'],
-                self.configuration['port'],
-                self.configuration['user'],
-                self.configuration['password']
-            ),
+           self.connection_manager.get_connection_string(),
             autocommit=True
         )
 
@@ -95,6 +175,8 @@ class DremioODBC(BaseQueryRunner):
             data = {'columns': columns, 'rows': rows}
             error = None
             json_data = json_dumps(data)
+        except:
+            raise ValueError(self.connection_manager.get_error_message(query))
         finally:
             cursor.close()
             connection.close()

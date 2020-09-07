@@ -14,9 +14,10 @@ alien -i --scripts /dremio-odbc-${DRIVER_VERSION}-1.x86_64.rpm &&\
 rm -f /dremio-odbc-${DRIVER_VERSION}-1.x86_64.rpm &&\
 pip3 install pyodbc pandas &&\
 pip install pyodbc pandas &&\
-wget -O $REDASH_BASE_PATH/redash/query_runner/dremio_odbc.py "https://raw.githubusercontent.com/udaykrishna/dremio_redash/master/dremio_odbc.py" &&\
-wget -O $REDASH_BASE_PATH/client/dist/images/db-logos/dremio_odbc.png "https://raw.githubusercontent.com/Dezota/DremioDSforRedash/master/dremio_odbc.png" &&\
-wget -O $REDASH_BASE_PATH/client/app/assets/images/db-logos/dremio_odbc.png "https://raw.githubusercontent.com/Dezota/DremioDSforRedash/master/dremio_odbc.png"
+wget -O $REDASH_BASE_PATH/client/dist/images/db-logos/dremio_odbc.png "https://raw.githubusercontent.com/udaykrishna/dremio_redash/master/dremio_odbc.png" &&\
+wget -O $REDASH_BASE_PATH/client/app/assets/images/db-logos/dremio_odbc.png "https://raw.githubusercontent.com/udaykrishna/dremio_redash/master/dremio_odbc.png"
+
+COPY dremio_odbc.py /app/redash/query_runner/dremio_odbc.py
 
 RUN apt-get clean && \
 apt-get clean && \
