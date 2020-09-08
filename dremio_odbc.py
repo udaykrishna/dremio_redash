@@ -8,8 +8,10 @@ import os, json
 from redash.query_runner import BaseQueryRunner, register
 from redash.query_runner import TYPE_STRING, TYPE_DATE, TYPE_DATETIME, TYPE_INTEGER, TYPE_FLOAT, TYPE_BOOLEAN
 from redash.utils import json_dumps, json_loads
-# from redash.tasks.queries.execution import QueryExecutionError
+import re
 import requests
+
+RE_ANNOTATION = re.compile(r"^\/\*(\*(?!\/)|[^*])*\*\/")
 
 TYPES_MAP = {
     0: TYPE_INTEGER,
@@ -53,7 +55,7 @@ class DremioConnectionManager:
         endpoint = self.get_url("login")
         resp = self.session.post(endpoint, data=json.dumps({"userName":self.username,"password":self.password}))
         data = json.loads(resp.content.decode())
-        self.session.headers.update({"authorization":"_dremio{token}".format(token=data["token"])})
+        self.session.headers.update({"authorization":"_dremio{token}".format(token=data.get("token","invalidtoken"))})
         return self.session
     
     def get_url(self, endpoint_name):
@@ -68,8 +70,9 @@ class DremioConnectionManager:
             self.username,
             self.password
         )
-    def get_error_message(self, query):
+    def get_error_message(self, query, _try=0, _max_tries=3):
         url = self.get_url("new_query")
+        query = RE_ANNOTATION.sub('', query).strip()
         payload = json.dumps({"sql":query})
         resp = self.session.post(url, data=payload)
         if resp.status_code==400:
@@ -93,7 +96,10 @@ class DremioConnectionManager:
             return "Dremio had a slight hiccup, please re-run your query"
         elif resp.status_code==401:
             self._login()
-            return self.get_error_message(query)
+            if _try<_max_tries:
+                return self.get_error_message(query, _try=_try+1)
+            else:
+                return "Unable to Login to dremio"
         else:
             data = resp.content.decode()
             return data
