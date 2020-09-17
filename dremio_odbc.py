@@ -10,6 +10,7 @@ from redash.query_runner import TYPE_STRING, TYPE_DATE, TYPE_DATETIME, TYPE_INTE
 from redash.utils import json_dumps, json_loads
 import re
 import requests
+import time
 
 RE_ANNOTATION = re.compile(r"^\/\*(\*(?!\/)|[^*])*\*\/")
 
@@ -27,7 +28,7 @@ TYPES_MAP = {
 class DremioConnectionManager:
     endpoint_map = {
             "login":"apiv2/login",
-            "new_query": "apiv2/datasets/new_untitled_sql_and_run?newVersion=1"
+            "new_query": "apiv2/datasets/new_untitled_sql?newVersion=1"
         }
     error_template = "Error {message} at Line {line} and column {col}"
     def __init__(self, host, username, password, odbc_port=31010, api_port=9047, https=False):
@@ -82,13 +83,20 @@ class DremioConnectionManager:
             code = data.get("code")
             details = []
             for error in data.get("details", {}).get("errors", []):
-                e_message = error.get("message"," \n ").split("\n")[0]
+                e_message = error.get("message",u" \n ").encode("ascii", "ignore")#.split('\n')[0]
                 if isinstance(e_message, str):
-                    e_message = e_message.split('\n')[0]
+                    e_message_details = e_message.split('\n')[0]
+                    start = e_message.find("org.apache.calcite.sql.parser.SqlParseException")
+                    end = e_message[start:].find("com.dremio.exec.planner.sql.parser")
+                    if end>-1 and start >-1:
+                        e_message = e_message[start+48:start+end]
+                    else:
+                        e_message = e_message.split('\n')[0]                    
                 e_range = error.get("range", {})
                 line = e_range.get("startLine")
                 column = e_range.get("startColumn")
-                details.append(self.error_template.format(message=e_message, line=line, col=column))
+                details.append(self.error_template.format(message=" ".join([e_message_details, e_message]),
+                                                          line=line, col=column))
             details = "\n".join(details)
             base_error = "{code}: {message} \n\nDETAILS\n\n{details}".format(code=code, message=message, details=details)
             return base_error
@@ -169,7 +177,7 @@ class DremioODBC(BaseQueryRunner):
         )
 
         cursor = connection.cursor()
-
+        start = time.time()
         try:
             cursor.execute(query)
 
@@ -182,7 +190,11 @@ class DremioODBC(BaseQueryRunner):
             error = None
             json_data = json_dumps(data)
         except:
-            raise ValueError(self.connection_manager.get_error_message(query))
+            stop = time.time()
+            if((stop-start)>1):
+                raise ValueError("Dremio query timeout, ensure that your query is optimized and run again")
+            else:
+                raise ValueError(self.connection_manager.get_error_message(query))
         finally:
             cursor.close()
             connection.close()
