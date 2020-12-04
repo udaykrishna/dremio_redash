@@ -39,7 +39,10 @@ class DremioConnectionManager:
         self.odbc_port = odbc_port
         self.session = self._create_session()
         self.https=https
-        self._login()
+        try:
+            self._login()
+        except:
+            pass
     
     @property
     def apiurl(self):
